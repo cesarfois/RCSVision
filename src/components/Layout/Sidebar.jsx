@@ -3,6 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
     FaSearch,
     FaChartBar,
+    FaChartLine,
     FaProjectDiagram,
     FaShieldAlt,
     FaDownload,
@@ -21,6 +22,7 @@ const Sidebar = ({ isCollapsed, toggleSidebar }) => {
         { path: '/analytics', label: 'Analytics', icon: <FaChartBar /> },
         { path: '/fluxo', label: 'Análise de Fluxo', icon: <FaProjectDiagram /> },
         { path: '/admin-workflow-analytics', label: 'Admin Workflows', icon: <FaShieldAlt />, highlight: true },
+        { path: '/performance', label: 'Gestão de Performance', icon: <FaChartLine /> },
         { path: '/download', label: 'Baixar Arquivos', icon: <FaDownload /> },
         { path: '/controle-documental', label: 'Controle Documental', icon: <FaFolderOpen /> },
     ];

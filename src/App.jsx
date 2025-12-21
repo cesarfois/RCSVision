@@ -9,6 +9,7 @@ import WorkflowAnalyticsPage from './pages/WorkflowAnalyticsPage';
 import AdminWorkflowAnalyticsPage from './pages/AdminWorkflowAnalyticsPage';
 import SemaforosPage from './pages/SemaforosPage';
 import DownloadPage from './pages/DownloadPage';
+import PerformancePage from './pages/PerformancePage';
 import DashboardLayout from './components/Layout/DashboardLayout';
 
 // Protected Route Wrapper
@@ -87,6 +88,16 @@ function App() {
                 <ProtectedRoute>
                   <DashboardLayout>
                     <DownloadPage />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/performance"
+              element={
+                <ProtectedRoute>
+                  <DashboardLayout>
+                    <PerformancePage />
                   </DashboardLayout>
                 </ProtectedRoute>
               }

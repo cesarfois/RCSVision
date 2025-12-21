@@ -20,6 +20,50 @@ const adminWorkflowApi = axios.create({
     }
 });
 
+// Create a dedicated axios instance for Platform API (Admin/Proxy Context)
+const adminPlatformApi = axios.create({
+    baseURL: '/DocuWare/Platform',
+    timeout: 30000,
+    headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+    }
+});
+
+// Add request interceptor for Platform API (Mirroring adminWorkflowApi logic)
+adminPlatformApi.interceptors.request.use(
+    (config) => {
+        const authData = sessionStorage.getItem('docuware_auth');
+        let targetUrl = null;
+
+        if (authData) {
+            try {
+                const parsed = JSON.parse(authData);
+                if (parsed.token) {
+                    config.headers.Authorization = `Bearer ${parsed.token}`;
+                }
+                if (parsed.url) {
+                    targetUrl = parsed.url;
+                }
+            } catch (error) {
+                console.error('[AdminPlatformApi] Error parsing auth data:', error);
+            }
+        }
+
+        // Use environment variable fallback if needed
+        if (!targetUrl) {
+            targetUrl = import.meta.env.VITE_DOCUWARE_ADMIN_URL || import.meta.env.VITE_DOCUWARE_WORKFLOW_URL;
+        }
+
+        if (targetUrl) {
+            config.headers['x-target-url'] = targetUrl;
+        }
+
+        return config;
+    },
+    (error) => Promise.reject(error)
+);
+
 // Add request interceptor to include User Token from Session Storage
 // This avoids the 1-hour expiration limit of the API Key
 adminWorkflowApi.interceptors.request.use(
@@ -481,6 +525,82 @@ export const adminWorkflowService = {
 
         } catch (error) {
             console.error('[AdminWorkflowService] Error loading task counts:', error);
+            throw error;
+        }
+    },
+
+    /**
+     * Get Workflow History for a specific document
+     * @param {string} cabinetId 
+     * @param {string} docId 
+     * @returns {Promise<Array>} List of history events
+     */
+    getWorkflowHistory: async (cabinetId, docId) => {
+        try {
+            // GET /FileCabinets/{CabinetID}/Documents/{DocID}/WorkflowHistory
+            const response = await adminPlatformApi.get(`/FileCabinets/${cabinetId}/Documents/${docId}/WorkflowHistory`);
+            return response.data.WorkflowHistoryItem || [];
+        } catch (error) {
+            console.warn(`[AdminWorkflowService] Failed to get history for doc ${docId}:`, error.message);
+            return [];
+        }
+    },
+
+    /**
+     * Fetch documents modified within a date range for a specific cabinet.
+     * Used for Monthly Performance Reports.
+     * @param {string} cabinetId 
+     * @param {Date} startDate 
+     * @param {Date} endDate 
+     * @param {string} [docType] - Optional: Filter by specific DWDOCUMENTTYPE
+     * @returns {Promise<Array>} List of documents (lightweight)
+     */
+    getDocumentsByDateRange: async (cabinetId, startDate, endDate, docType = null) => {
+        try {
+            console.log(`[AdminWorkflowService] Searching docs in ${cabinetId} from ${startDate.toISOString()} to ${endDate.toISOString()} ${docType ? `(Type: ${docType})` : ''}`);
+
+            // We need the Search Dialog ID first
+            const dialogRes = await adminPlatformApi.get(`/FileCabinets/${cabinetId}/Dialogs`);
+            const searchDialog = dialogRes.data.Dialog?.find(d => d.Type === 'Search');
+
+            if (!searchDialog) {
+                throw new Error('Search dialog not found');
+            }
+
+            // Construct Query: DWLastModified OR DWWorkflowDate between dates
+            const conditions = [
+                {
+                    DBName: 'DWLastModified',
+                    Value: [startDate.toISOString(), endDate.toISOString()],
+                    Operation: 'Between'
+                }
+            ];
+
+            // Add DocType filter if provided
+            if (docType) {
+                conditions.push({
+                    DBName: 'DOCUMENT_TYPE', // Using standard system name based on prompt "Tipo Documental"
+                    Value: [docType],
+                    Operation: 'Equal'
+                });
+            }
+
+            const query = {
+                Condition: conditions,
+                Operation: 'And'
+            };
+
+            const response = await adminPlatformApi.post(`/FileCabinets/${cabinetId}/Query/DialogExpression`, query, {
+                params: {
+                    dialogId: searchDialog.Id,
+                    count: 1000 // Limit for safety, but usually monthly volume is manageable
+                }
+            });
+
+            return response.data.Items || [];
+
+        } catch (error) {
+            console.error('[AdminWorkflowService] Date range search failed:', error);
             throw error;
         }
     },
