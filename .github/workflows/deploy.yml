@@ -43,4 +43,14 @@ jobs:
             docker compose down --remove-orphans
             docker compose up -d --build
             
+            # Wait for container to initialize
+            echo "Waiting for container to start..."
+            sleep 5
+            
+            echo "=== Container Status ==="
+            docker ps -a --filter name=vision
+            
+            echo "=== Container Logs ==="
+            docker logs vision --tail 50
+            
             echo "Deployment completed successfully!"
