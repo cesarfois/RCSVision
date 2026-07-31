@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import { createProxyMiddleware } from 'http-proxy-middleware';
+import path from 'path';
+
 
 /**
  * @file proxy-server.js
@@ -158,6 +160,15 @@ app.use('/DocuWare', createProxyMiddleware({
  * Uses the exact same proxy options.
  */
 app.use('/docuware-proxy', createProxyMiddleware(proxyOptions));
+
+// Serve static assets in production (from dist folder)
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+app.use(express.static(path.join(__dirname, 'dist')));
+
+// SPA router fallback
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+});
 
 // ----------------------------------------------------------------------------
 // 4. Server Start (Conditional)
