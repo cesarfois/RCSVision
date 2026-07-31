@@ -12,7 +12,7 @@ services:
         - VITE_DOCUWARE_ADMIN_URL=${VITE_DOCUWARE_ADMIN_URL}
     container_name: rcsvision-app
     ports:
-      - "${PORT:-8080}:3001" # Map configurable host port (default 8080) to 3001 in the container
+      - "3013:3001" # Map fixed host port 3013 to 3001 in the container
     restart: always
     environment:
       - NODE_ENV=production

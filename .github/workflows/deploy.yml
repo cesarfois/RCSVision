@@ -37,7 +37,6 @@ jobs:
             echo "VITE_DOCUWARE_WORKFLOW_URL=${{ secrets.VITE_DOCUWARE_WORKFLOW_URL }}" >> .env
             echo "VITE_DOCUWARE_ADMIN_API_KEY=${{ secrets.VITE_DOCUWARE_ADMIN_API_KEY }}" >> .env
             echo "VITE_DOCUWARE_ADMIN_URL=${{ secrets.VITE_DOCUWARE_ADMIN_URL }}" >> .env
-            echo "PORT=${{ secrets.PORT }}" >> .env
 
             # Build and restart containers
             echo "Starting docker-compose..."
