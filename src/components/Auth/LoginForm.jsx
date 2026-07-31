@@ -5,8 +5,8 @@ import LoadingSpinner from '../Common/LoadingSpinner';
 
 const LoginForm = () => {
     const { login } = useAuth();
-    const [url, setUrl] = useState('');
-    const [username, setUsername] = useState('');
+    const [url, setUrl] = useState('https://rcsangola.docuware.cloud');
+    const [username, setUsername] = useState('cesar.fois.ext@rcsangola.com');
     const [password, setPassword] = useState('');
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(false);
