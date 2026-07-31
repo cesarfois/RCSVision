@@ -1,0 +1,47 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH and Deploy to Contabo VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script: |
+            # Create /app folder if it doesn't exist
+            mkdir -p /app
+
+            # Clone repository if it doesn't exist, otherwise pull latest changes
+            if [ ! -d "/app/vision" ]; then
+              echo "Cloning repository..."
+              git clone https://github.com/cesarfois/RCSVision.git /app/vision
+            fi
+
+            cd /app/vision
+            echo "Fetching latest changes..."
+            git fetch origin
+            git reset --hard origin/main
+
+            # Create or overwrite .env file with secrets
+            echo "Creating .env file..."
+            echo "VITE_DOCUWARE_WORKFLOW_API_KEY=${{ secrets.VITE_DOCUWARE_WORKFLOW_API_KEY }}" > .env
+            echo "VITE_DOCUWARE_WORKFLOW_URL=${{ secrets.VITE_DOCUWARE_WORKFLOW_URL }}" >> .env
+            echo "VITE_DOCUWARE_ADMIN_API_KEY=${{ secrets.VITE_DOCUWARE_ADMIN_API_KEY }}" >> .env
+            echo "VITE_DOCUWARE_ADMIN_URL=${{ secrets.VITE_DOCUWARE_ADMIN_URL }}" >> .env
+            echo "PORT=${{ secrets.PORT }}" >> .env
+
+            # Build and restart containers
+            echo "Starting docker-compose..."
+            docker compose down --remove-orphans
+            docker compose up -d --build
+            
+            echo "Deployment completed successfully!"
