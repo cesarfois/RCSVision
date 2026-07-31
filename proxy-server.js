@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 
 /**
@@ -176,9 +177,7 @@ app.get('*', (req, res) => {
 
 // Only start the server if running directly (e.g., node proxy-server.js)
 // If imported by Netlify Functions, we just export the app.
-import { fileURLToPath } from 'url';
-
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && (process.argv[1].endsWith('proxy-server.js') || process.argv[1] === fileURLToPath(import.meta.url))) {
     app.listen(PORT, '0.0.0.0', () => {
         console.log(`===============================================`);
         console.log(`   Dynamic Proxy Server Running`);
