@@ -10,7 +10,7 @@ services:
         - VITE_DOCUWARE_WORKFLOW_URL=${VITE_DOCUWARE_WORKFLOW_URL}
         - VITE_DOCUWARE_ADMIN_API_KEY=${VITE_DOCUWARE_ADMIN_API_KEY}
         - VITE_DOCUWARE_ADMIN_URL=${VITE_DOCUWARE_ADMIN_URL}
-    container_name: rcsvision-vision-app
+    container_name: vision
     ports:
       - "3013:3001" # Map fixed host port 3013 to 3001 in the container
     restart: always
