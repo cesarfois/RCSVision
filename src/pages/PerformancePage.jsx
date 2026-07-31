@@ -10,9 +10,7 @@ const PerformancePage = () => {
 
     // State
     const [selectedWorkflowId, setSelectedWorkflowId] = useState('');
-    const [selectedDocType, setSelectedDocType] = useState('');
-    const [availableDocTypes, setAvailableDocTypes] = useState([]);
-    const [loadingDocTypes, setLoadingDocTypes] = useState(false);
+    const [effectiveCabinetId, setEffectiveCabinetId] = useState(null);
 
     const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
     const [loading, setLoading] = useState(false);
@@ -25,29 +23,42 @@ const PerformancePage = () => {
         return workflows?.find(w => w.id === selectedWorkflowId) || null;
     }, [workflows, selectedWorkflowId]);
 
-    // Effect: Load DocTypes when Workflow (Cabinet) changes
+    // Effect: Load Workflow Details if CabinetID is missing
     useEffect(() => {
-        if (!selectedWorkflow?.fileCabinetId) {
-            setAvailableDocTypes([]);
+        if (!selectedWorkflowId) {
+            setEffectiveCabinetId(null);
             return;
         }
 
-        const fetchDocTypes = async () => {
-            setLoadingDocTypes(true);
+        const loadDetails = async () => {
             try {
-                // Fetch unique values for DOCUMENT_TYPE field
-                const types = await docuwareService.getSelectList(selectedWorkflow.fileCabinetId, 'DOCUMENT_TYPE');
-                setAvailableDocTypes(types.sort());
+                let cabinetId = selectedWorkflow?.fileCabinetId;
+
+                // Robustness: If index didn't have CabinetID, fetch full details
+                if (!cabinetId) {
+                    try {
+                        console.log('Fetching full details for workflow', selectedWorkflowId);
+                        const details = await adminWorkflowService.getWorkflowDetails(selectedWorkflowId);
+                        cabinetId = details.FileCabinetId;
+                    } catch (e) {
+                        console.error('Could not fetch workflow details', e);
+                    }
+                }
+
+                if (!cabinetId) {
+                    console.warn('No Cabinet ID found for workflow', selectedWorkflowId);
+                    return;
+                }
+
+                setEffectiveCabinetId(cabinetId);
+
             } catch (err) {
-                console.warn('Failed to load doc types', err);
-                setAvailableDocTypes([]);
-            } finally {
-                setLoadingDocTypes(false);
+                console.warn('Failed to resolve cabinet', err);
             }
         };
 
-        fetchDocTypes();
-    }, [selectedWorkflow]);
+        loadDetails();
+    }, [selectedWorkflowId, selectedWorkflow]);
 
     // Main Logic
     const generateReport = async () => {
@@ -62,18 +73,19 @@ const PerformancePage = () => {
         setProgress({ current: 0, total: 0, status: 'Buscando documentos...' });
 
         try {
-            const cabinetId = selectedWorkflow.fileCabinetId;
+            const cabinetId = effectiveCabinetId;
+
+            if (!cabinetId) {
+                throw new Error("ID do Armário não encontrado para o fluxo selecionado.");
+            }
 
             // 1. Define Date Range (Full Month)
             const [year, month] = selectedMonth.split('-');
             const startDate = new Date(year, month - 1, 1);
             const endDate = new Date(year, month, 0, 23, 59, 59); // Last day of month
 
-            // 2. Fetch Docs modified in that month + DocType Filter
-            // If no doc type selected, we search generic (optional behavior, prompts says to use DialogExpression for type)
-            const filterType = selectedDocType || null;
-
-            const docs = await adminWorkflowService.getDocumentsByDateRange(cabinetId, startDate, endDate, filterType);
+            // 2. Fetch Docs modified in that month
+            const docs = await adminWorkflowService.getDocumentsByDateRange(cabinetId, startDate, endDate);
 
             if (docs.length === 0) {
                 setReportData([]);
@@ -162,7 +174,7 @@ const PerformancePage = () => {
             {/* Filters Card */}
             <div className="card bg-base-100 shadow-lg mb-6 flex-none">
                 <div className="card-body p-4">
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
 
                         {/* Month Picker */}
                         <div className="form-control">
@@ -199,25 +211,7 @@ const PerformancePage = () => {
                             </select>
                         </div>
 
-                        {/* DocType Selector (Dynamic) */}
-                        <div className="form-control">
-                            <label className="label">
-                                <span className="label-text font-semibold flex items-center gap-2">
-                                    <FaFilter /> Tipo Documental
-                                </span>
-                            </label>
-                            <select
-                                className="select select-bordered w-full"
-                                value={selectedDocType}
-                                onChange={(e) => setSelectedDocType(e.target.value)}
-                                disabled={!selectedWorkflow || loadingDocTypes}
-                            >
-                                <option value="">Todos os tipos</option>
-                                {availableDocTypes.map(type => (
-                                    <option key={type} value={type}>{type}</option>
-                                ))}
-                            </select>
-                        </div>
+
 
                         {/* Action Button */}
                         <button

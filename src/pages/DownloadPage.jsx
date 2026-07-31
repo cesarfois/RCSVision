@@ -242,6 +242,10 @@ const DownloadPage = () => {
     // Fetch fields when cabinetId changes (for the dropdown)
     useEffect(() => {
         const fetchFields = async () => {
+            // Reset selection when cabinet changes
+            setUpdateField('');
+            setUpdateValue('');
+
             if (!cabinetId) {
                 setAvailableFields([]);
                 return;
@@ -340,126 +344,127 @@ const DownloadPage = () => {
 
     /**
      * @function checkFolderForUploads
-     * @description Main Monitoring Loop (Heartbeat).
-     * Scans the watched directory for processed files, uploads them to DocuWare,
-     * updates metadata, and moves them to completion/error folders.
+     * @description Main Monitoring Loop (Heartbeat) - OPTIMIZED PARALLEL VERSION.
+     * Scans the watched directory and processes files in parallel batches (Concurrency: 5).
      */
     const checkFolderForUploads = async () => {
         if (!monitorHandle || isProcessingRef.current) return;
 
-        isProcessingRef.current = true; // Lock to prevent overlapping intervals
+        isProcessingRef.current = true; // Lock
         try {
-            // Ensure destination folders exist
             const successDir = await monitorHandle.getDirectoryHandle('Processados', { create: true });
             const errorDir = await monitorHandle.getDirectoryHandle('Erros', { create: true });
 
-            let filesProcessedInThisCycle = 0;
-
+            // 1. Gather all candidate files first
+            const candidates = [];
             for await (const entry of monitorHandle.values()) {
                 if (entry.kind === 'file') {
-                    // Regex Match: Look for files named like "123___Cabinet456___Contract.pdf"
-                    // Group 1: DocuWare DocID
-                    // Group 2: Cabinet ID
-                    // Group 3: Original Filename
-                    const match = entry.name.match(/^(\d+)___(.+)___(.+)\.pdf$/i);
-
-                    if (match) {
-                        filesProcessedInThisCycle++; // Mark activity
-
-                        const filename = entry.name;
-
-                        // 1. Retry Mechanism Check
-                        if (failedUploads.current[filename] && failedUploads.current[filename] >= 3) {
-                            addLog(`⚠️ ${filename} failed 3 times. Moving to 'Erros' folder.`);
-                            try {
-                                await moveFile(monitorHandle, errorDir, filename);
-                                addLog(`   📂 Moved to /Erros`);
-                                setMonitorStats(prev => ({ ...prev, error: prev.error + 1 })); // Increment Error
-                                delete failedUploads.current[filename]; // Stop tracking
-                            } catch (moveErr) {
-                                addLog(`   ❌ Failed to move to Error folder: ${moveErr.message}`);
-                            }
-                            continue;
-                        }
-
-                        const docId = match[1];
-                        const fileCabinetId = match[2];
-
-                        addLog(`🔎 Detected file for replacement: ${filename}`);
-                        addLog(`   ID: ${docId}, Cabinet: ${fileCabinetId}`);
-
-                        try {
-                            // 2. Consistency Check: Ensure file wasn't deleted mid-loop
-                            try {
-                                await monitorHandle.getFileHandle(filename);
-                            } catch (e) {
-                                console.warn("File vanished before processing:", filename);
-                                continue;
-                            }
-
-                            const file = await entry.getFile();
-                            addLog(`   📤 Uploading replacement for ID ${docId}...`);
-
-                            // 3. Execution: Upload Replacement
-                            await docuwareService.uploadReplacement(fileCabinetId, docId, file);
-                            addLog(`   ✅ Upload successful!`);
-
-                            // 4. Metadata Update (Optional Step)
-                            if (updateField && updateValue) {
-                                try {
-                                    addLog(`   📝 Updating metadata: ${updateField} = "${updateValue}"...`);
-                                    await docuwareService.updateDocumentFields(fileCabinetId, docId, updateField, updateValue);
-                                    addLog(`   ✅ Metadata updated.`);
-                                } catch (metaErr) {
-                                    console.error("Metadata update failed:", metaErr);
-                                    addLog(`   ⚠️ Metadata update failed: ${metaErr.message} (File upload was successful)`);
-                                }
-                            }
-
-                            addLog(`   🚚 Moving to 'Processados'...`);
-
-                            // 5. Cleanup: Move to Success Folder
-                            try {
-                                await moveFile(monitorHandle, successDir, filename);
-                                addLog(`   📂 Moved to /Processados`);
-                                setMonitorStats(prev => ({ ...prev, success: prev.success + 1 })); // Increment Success
-                                delete failedUploads.current[filename];
-                            } catch (moveErr) {
-                                if (moveErr.name === 'NotFoundError') {
-                                    addLog(`   ℹ️ File already gone (race condition avoiding).`);
-                                } else {
-                                    throw moveErr;
-                                }
-                            }
-
-                        } catch (err) {
-                            console.error(`Failed to process ${entry.name}:`, err);
-                            addLog(`   ❌ Error processing ${entry.name}: ${err.message}`);
-
-                            // Increment Failure Counter
-                            failedUploads.current[filename] = (failedUploads.current[filename] || 0) + 1;
-                            addLog(`   🔄 Retry count: ${failedUploads.current[filename]}/3`);
-                        }
+                    // Regex: DOCID___CABINETID___FILENAME.pdf
+                    if (entry.name.match(/^(\d+)___(.+)___(.+)\.pdf$/i)) {
+                        candidates.push(entry);
                     }
                 }
             }
 
-            // --- Idle Check Logic ---
-            // If no activity for 5 minutes, turn off the monitor to save resources/safety
-            if (filesProcessedInThisCycle > 0) {
-                lastActivityRef.current = Date.now(); // Reset timer if we did work
-            } else {
+            if (candidates.length === 0) {
+                // Idle check
                 const idleTime = Date.now() - lastActivityRef.current;
-                if (idleTime > 300000) { // 5 minutes (300,000 ms)
+                if (idleTime > 300000) { // 5 mins
                     addLog('💤 No files found for 5 minutes. Finishing job automatically.');
-                    // Don't call stopMonitoring directly here to avoid state closure issues with alert,
-                    // but we can just trigger it. The stats state will be whatever it is.
                     stopMonitoring();
+                }
+                return;
+            }
+
+            lastActivityRef.current = Date.now(); // Activity detected
+
+            // 2. Define single file processor
+            const processFile = async (entry) => {
+                const filename = entry.name;
+                const match = filename.match(/^(\d+)___(.+)___(.+)\.pdf$/i);
+                if (!match) return;
+
+                // Retry Check
+                if (failedUploads.current[filename] && failedUploads.current[filename] >= 3) {
+                    addLog(`⚠️ ${filename} failed 3 times. Moving to 'Erros'.`);
+                    try {
+                        await moveFile(monitorHandle, errorDir, filename);
+                        setMonitorStats(prev => ({ ...prev, error: prev.error + 1 }));
+                        delete failedUploads.current[filename];
+                    } catch (e) { console.error(e); }
+                    return;
+                }
+
+                const docId = match[1];
+                const fileCabinetId = match[2];
+
+                try {
+                    // Consistency Check
+                    try {
+                        await monitorHandle.getFileHandle(filename);
+                    } catch (e) {
+                        // Silent skip if vanished (race condition)
+                        return;
+                    }
+
+                    const file = await entry.getFile();
+                    addLog(`🚀 [START] Uploading ${docId}...`);
+
+                    // Upload
+                    await docuwareService.uploadReplacement(fileCabinetId, docId, file);
+
+                    // Metadata Update
+                    if (updateField && updateValue) {
+                        try {
+                            await docuwareService.updateDocumentFields(fileCabinetId, docId, updateField, updateValue);
+                        } catch (metaErr) {
+                            addLog(`   ⚠️ Metadata warning for ${docId}: ${metaErr.message}`);
+                        }
+                    }
+
+                    // Move to Success
+                    await moveFile(monitorHandle, successDir, filename);
+                    addLog(`   ✅ [DONE] ${docId} processed successfully.`);
+                    setMonitorStats(prev => ({ ...prev, success: prev.success + 1 }));
+                    delete failedUploads.current[filename];
+
+                } catch (err) {
+                    console.error(`Failed ${filename}:`, err);
+                    addLog(`   ❌ Error ${docId}: ${err.message}`);
+                    failedUploads.current[filename] = (failedUploads.current[filename] || 0) + 1;
+                }
+            };
+
+            // 3. Execute with Concurrency Limit (Pool of 5)
+            const CONCURRENCY = 5;
+            const activePromises = [];
+
+            // Limit candidates to avoid gigantic loops in one go (optional, but good for safety)
+            // Let's process all found candidates, trusting the pool.
+            addLog(`⚡ Processing ${candidates.length} files with parallel pool (Limit: ${CONCURRENCY})...`);
+
+            for (const entry of candidates) {
+                // Check stop signal using logic safe for closures
+                if (!monitorIntervalRef.current) break;
+
+                const p = processFile(entry).then(() => {
+                    // Remove self from active pool when done
+                    activePromises.splice(activePromises.indexOf(p), 1);
+                });
+
+                activePromises.push(p);
+
+                if (activePromises.length >= CONCURRENCY) {
+                    // Wait for at least one to finish before starting next
+                    await Promise.race(activePromises);
                 }
             }
 
+            // Wait for remaining
+            await Promise.all(activePromises);
+
         } catch (error) {
-            console.error('Error checking folder:', error);
+            console.error('Error in monitoring loop:', error);
         } finally {
             isProcessingRef.current = false;
         }
@@ -625,11 +630,14 @@ const DownloadPage = () => {
                                     disabled={isMonitoring}
                                 >
                                     <option value="">-- Não atualizar metadados --</option>
-                                    {availableFields.map((field) => (
-                                        <option key={field.DBName || field.Name} value={field.DBName || field.Name}>
-                                            {field.DisplayName || field.Name}
-                                        </option>
-                                    ))}
+                                    {availableFields.map((field) => {
+                                        const dbName = field.DBFieldName || field.DBName || field.Name;
+                                        return (
+                                            <option key={dbName} value={dbName}>
+                                                {field.DisplayName || dbName}
+                                            </option>
+                                        );
+                                    })}
                                 </select>
                             </div>
 

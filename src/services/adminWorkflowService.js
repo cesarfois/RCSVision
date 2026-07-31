@@ -56,6 +56,11 @@ adminPlatformApi.interceptors.request.use(
         }
 
         if (targetUrl) {
+            // Fix for Proxy Path Duplication:
+            // The request URL (baseURL + endpoint) already includes /DocuWare/Platform.
+            // If the target URL also ends with /DocuWare/Platform, the proxy may double it.
+            // We strip it here to point to the server root.
+            targetUrl = targetUrl.replace(/\/DocuWare\/Platform\/?$/i, '');
             config.headers['x-target-url'] = targetUrl;
         }
 
@@ -94,7 +99,12 @@ adminWorkflowApi.interceptors.request.use(
         }
 
         // Set target URL for proxy
+        // Set target URL for proxy
         if (targetUrl) {
+            // Fix for Proxy Path Duplication:
+            // AdminWorkflowApi uses /DocuWare/Platform/Workflow as base.
+            // We must strip the base path from the target URL to avoid duplication.
+            targetUrl = targetUrl.replace(/\/DocuWare\/Platform\/?$/i, '');
             config.headers['x-target-url'] = targetUrl;
         }
 
@@ -561,11 +571,56 @@ export const adminWorkflowService = {
 
             // We need the Search Dialog ID first
             const dialogRes = await adminPlatformApi.get(`/FileCabinets/${cabinetId}/Dialogs`);
-            const searchDialog = dialogRes.data.Dialog?.find(d => d.Type === 'Search');
+
+            // DEBUG: List all dialogs to see what we have
+            const allDialogs = dialogRes.data.Dialog || [];
+            console.log(`[AdminWorkflowService] Found ${allDialogs.length} dialogs for cabinet ${cabinetId}:`, allDialogs.map(d => `${d.Type} (${d.Id})`));
+
+            const searchDialog = allDialogs.find(d => d.Type === 'Search');
 
             if (!searchDialog) {
+                console.error('[AdminWorkflowService] No Search dialog found!');
                 throw new Error('Search dialog not found');
             }
+
+            console.log('[AdminWorkflowService] Selected Search Dialog:', JSON.stringify(searchDialog, null, 2));
+
+            // HATEOAS: Find the 'Query' link
+
+            // HATEOAS Strategy:
+            // 1. Try 'Query' link (Standard Platform).
+            // 2. If missing, try 'Count' link and replace 'CountExpression' with 'DialogExpression' (Search Service).
+            // 3. Fallback to constructed Platform path.
+
+            // Fix property casing: some versions use 'rel'/'href', others 'Rel'/'Href'
+            const getLink = (relName) => searchDialog.Links?.find(l => (l.Rel || l.rel) === relName);
+
+            const queryLink = getLink('Query');
+            const countLink = getLink('count');
+
+            let finalUrl = null;
+            let useRawAxios = false;
+
+            // Helper to get href safely
+            const getHref = (link) => (link ? (link.Href || link.href || '') : '');
+
+            if (queryLink && getHref(queryLink)) {
+                const href = getHref(queryLink);
+                // Use Query link, strip domain
+                const match = href.match(/\/Platform(\/.*)/);
+                finalUrl = (match && match[1]) ? match[1] : href;
+            } else if (countLink && getHref(countLink)) {
+                const href = getHref(countLink);
+                // FALLBACK: Derive from Count link (e.g. /DocuWare/Search/.../CountExpression)
+                console.log('[AdminWorkflowService] Query link missing, using Count link pattern:', href);
+                finalUrl = href.replace('CountExpression', 'DialogExpression');
+                useRawAxios = true;
+            } else {
+                // ABSOLUTE FALLBACK
+                finalUrl = `/FileCabinets/${cabinetId}/Query/DialogExpression`;
+            }
+
+            console.log(`[AdminWorkflowService] Final Query URL: ${finalUrl} (RawAxios: ${useRawAxios})`);
 
             // Construct Query: DWLastModified OR DWWorkflowDate between dates
             const conditions = [
@@ -590,12 +645,41 @@ export const adminWorkflowService = {
                 Operation: 'And'
             };
 
-            const response = await adminPlatformApi.post(`/FileCabinets/${cabinetId}/Query/DialogExpression`, query, {
-                params: {
-                    dialogId: searchDialog.Id,
-                    count: 1000 // Limit for safety, but usually monthly volume is manageable
-                }
-            });
+            let response;
+            if (useRawAxios) {
+                // Manually construct request to handle /DocuWare/Search or other paths
+                const authData = sessionStorage.getItem('docuware_auth');
+                const parsedAuth = authData ? JSON.parse(authData) : {};
+
+                // Ensure we hit the proxy root
+                // finalUrl is likely /DocuWare/Search/...
+                // Our proxy listens on localhost:5173/DocuWare/...
+
+                // Fix targetUrl (strip internal /DocuWare/Platform suffix if present in stored url)
+                let targetHost = parsedAuth.url || '';
+                targetHost = targetHost.replace(/\/DocuWare\/Platform\/?$/i, '');
+
+                response = await axios.post(finalUrl, query, {
+                    headers: {
+                        'Authorization': `Bearer ${parsedAuth.token}`,
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json',
+                        'x-target-url': targetHost
+                    },
+                    params: {
+                        dialogId: searchDialog.Id,
+                        count: 1000
+                    }
+                });
+            } else {
+                // Use standard Platform API
+                response = await adminPlatformApi.post(finalUrl, query, {
+                    params: {
+                        dialogId: searchDialog.Id,
+                        count: 1000
+                    }
+                });
+            }
 
             return response.data.Items || [];
 

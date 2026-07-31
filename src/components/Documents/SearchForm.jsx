@@ -225,11 +225,14 @@ const SearchForm = ({ onSearch, onLog, totalCount = 0, onCabinetChange }) => {
                                     }}
                                 >
                                     <option value="">Select field...</option>
-                                    {fields.map((field) => (
-                                        <option key={field.DBFieldName} value={field.DBFieldName}>
-                                            {field.DisplayName || field.DBFieldName}
-                                        </option>
-                                    ))}
+                                    {fields.map((field) => {
+                                        const dbName = field.DBFieldName || field.DBName || field.Name;
+                                        return (
+                                            <option key={dbName} value={dbName}>
+                                                {field.DisplayName || dbName}
+                                            </option>
+                                        );
+                                    })}
                                 </select>
 
                                 <div className="flex-1 relative">

@@ -119,6 +119,7 @@ const AnalyticsContainer = ({ cabinetId, cabinets = [], onCabinetChange, loading
             : fullData;
 
         const counts = {};
+        const sizes = {};
         const dateCounts = {};
         let total = 0;
 
@@ -126,6 +127,10 @@ const AnalyticsContainer = ({ cabinetId, cabinets = [], onCabinetChange, loading
             const value = getFieldValue(doc, selectedField);
             const key = value ? String(value) : 'Empty';
             counts[key] = (counts[key] || 0) + 1;
+            
+            const docSize = parseInt(doc.FileSize, 10) || 0;
+            sizes[key] = (sizes[key] || 0) + docSize;
+
             total++;
 
             let dateStr = doc.DWStoreDateTime || doc.StoreDateTime;
@@ -170,7 +175,8 @@ const AnalyticsContainer = ({ cabinetId, cabinets = [], onCabinetChange, loading
         const pieData = Object.keys(counts).map(key => ({
             name: key,
             value: counts[key],
-            percent: (counts[key] / total) * 100
+            percent: (counts[key] / total) * 100,
+            totalSize: sizes[key] || 0
         })).sort((a, b) => b.value - a.value);
 
         const barData = pieData.slice(0, 5);
@@ -192,14 +198,24 @@ const AnalyticsContainer = ({ cabinetId, cabinets = [], onCabinetChange, loading
 
     const handleExportBreakdown = () => {
         if (!pieChartData || pieChartData.length === 0) return;
-        const headers = [`Value (${selectedField})`, 'Count', 'Percentage'];
+        const headers = [`Value (${selectedField})`, 'Count', 'Percentage', 'Total Size (Bytes)', 'Total Size (Formatted)'];
         const csvContent = [
             headers.join(','),
             ...pieChartData.map(row => {
                 const value = `"${String(row.name).replace(/"/g, '""')}"`;
                 const count = row.value;
                 const percent = row.percent.toFixed(2);
-                return `${value},${count},${percent}%`;
+                const sizeBytes = row.totalSize || 0;
+                
+                let formattedSize = '0 Bytes';
+                if (sizeBytes > 0) {
+                    const k = 1024;
+                    const sizesArr = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+                    const i = Math.floor(Math.log(sizeBytes) / Math.log(k));
+                    formattedSize = Math.round(sizeBytes / Math.pow(k, i) * 100) / 100 + ' ' + sizesArr[i];
+                }
+                
+                return `${value},${count},${percent}%,${sizeBytes},"${formattedSize}"`;
             })
         ].join('\n');
 

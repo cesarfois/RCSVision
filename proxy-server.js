@@ -98,6 +98,16 @@ const proxyOptions = {
         const timestamp = new Date().toISOString();
         console.log(`[${timestamp}] [Proxy] 📤 Forwarding ${req.method} ${req.originalUrl} -> ${target}`);
 
+        // DEBUG: detailed upstream construction
+        try {
+            // Remove /DocuWare/Platform prefix if present in originalUrl because target often is the root
+            // BUT wait, changeOrigin handles host, but path is just appended.
+            // If target is https://example.com and req.url is /DocuWare/Platform/Foo
+            // Result is https://example.com/DocuWare/Platform/Foo
+            const upstream = target.replace(/\/$/, '') + req.originalUrl;
+            console.log(`[${timestamp}] [Proxy] 🔗 FULL UPSTREAM URL (Calculated): ${upstream}`);
+        } catch (e) { console.error('Error logging upstream', e); }
+
         // Cleanliness: Remove the internal routing header so DocuWare doesn't see it
         proxyReq.removeHeader('x-target-url');
         proxyReq.removeHeader('origin'); // Let changeOrigin handle the origin header re-writing

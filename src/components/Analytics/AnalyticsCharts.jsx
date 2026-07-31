@@ -3,6 +3,14 @@ import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, Legend, ResponsiveCont
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#8dd1e1', '#a4de6c', '#d0ed57'];
 
+const formatFileSize = (bytes) => {
+    if (!bytes || bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+};
+
 const CustomTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
         const data = payload[0].payload;
@@ -15,6 +23,9 @@ const CustomTooltip = ({ active, payload, label }) => {
                 <p className="font-bold mb-1">{name}</p>
                 <p>Count: <span className="font-mono">{value}</span></p>
                 {data.percent && <p>Percent: <span className="font-mono">{data.percent.toFixed(1)}%</span></p>}
+                {data.totalSize !== undefined && (
+                    <p>Total Size: <span className="font-mono text-primary">{formatFileSize(data.totalSize)}</span></p>
+                )}
             </div>
         );
     }
@@ -187,6 +198,7 @@ const AnalyticsCharts = ({ pieChartData, barChartData, timelineData, selectedFie
                                     <th>Value ({selectedField})</th>
                                     <th>Count</th>
                                     <th>Percentage</th>
+                                    <th>Total Size</th>
                                     <th>Preview</th>
                                 </tr>
                             </thead>
@@ -196,6 +208,7 @@ const AnalyticsCharts = ({ pieChartData, barChartData, timelineData, selectedFie
                                         <td className="font-bold">{row.name}</td>
                                         <td>{row.value.toLocaleString()}</td>
                                         <td>{row.percent.toFixed(2)}%</td>
+                                        <td className="font-mono text-xs">{formatFileSize(row.totalSize)}</td>
                                         <td>
                                             <progress className="progress progress-primary w-20" value={row.percent} max="100"></progress>
                                         </td>

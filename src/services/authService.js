@@ -1,7 +1,10 @@
 import axios from 'axios';
-import api from './api';
+import api, { injectAuthService } from './api';
 
 const AUTH_KEY = 'docuware_auth';
+
+// In-Memory Credential Cache (cleared on page refresh/close)
+let cachedCredentials = null;
 
 export const authService = {
     // 1. Login Function
@@ -59,7 +62,7 @@ export const authService = {
             params.append('username', username);
             params.append('password', password);
             params.append('client_id', 'docuware.platform.net.client');
-            params.append('scope', 'docuware.platform');
+            params.append('scope', 'docuware.platform'); // Reverted: Removed offline_access
 
             const tokenResponse = await axios.post(proxiedToken, params, {
                 headers: {
@@ -68,20 +71,29 @@ export const authService = {
                 }
             });
 
-            const accessToken = tokenResponse.data.access_token;
+            const { access_token } = tokenResponse.data;
             console.log('✅ Authentication successful!');
+
+            // CACHE CREDENTIALS FOR AUTO-REFRESH
+            cachedCredentials = {
+                username,
+                password,
+                url,
+                proxiedToken,
+                tokenOrigin
+            };
 
             // Save to SessionStorage
             const authData = {
-                token: accessToken,
+                token: access_token,
                 username: username,
                 url: baseUrl,
-                organizationId: orgId  // Save organization ID for document viewer URLs
+                organizationId: orgId
             };
             sessionStorage.setItem(AUTH_KEY, JSON.stringify(authData));
 
             // Set default header for future requests
-            api.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`;
+            api.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
 
             return authData;
         } catch (error) {
@@ -116,6 +128,9 @@ export const authService = {
     logout: () => {
         sessionStorage.removeItem(AUTH_KEY);
         delete api.defaults.headers.common['Authorization'];
+        cachedCredentials = null;
+        // Optional: Redirect to login page
+        window.location.href = '/';
     },
 
     // 3. Get Current User (from storage)
@@ -128,5 +143,59 @@ export const authService = {
             return authData;
         }
         return null;
+    },
+
+    // 4. Refresh Access Token
+    refreshAccessToken: async () => {
+        try {
+            const stored = sessionStorage.getItem(AUTH_KEY);
+            if (!stored) throw new Error('No session to refresh');
+
+            const authData = JSON.parse(stored);
+            if (!authData.refreshToken || !authData.tokenEndpoint) throw new Error('No refresh token available');
+
+            console.log('🔄 Attempting checking token refresh...');
+
+            // Extract endpoint details
+            const tokenPath = new URL(authData.tokenEndpoint).pathname;
+            const tokenOrigin = new URL(authData.tokenEndpoint).origin;
+            const proxiedToken = `/docuware-proxy${tokenPath}`;
+
+            const params = new URLSearchParams();
+            params.append('grant_type', 'refresh_token');
+            params.append('refresh_token', authData.refreshToken);
+            params.append('client_id', 'docuware.platform.net.client');
+
+            const response = await axios.post(proxiedToken, params, {
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'x-target-url': tokenOrigin
+                }
+            });
+
+            const { access_token, refresh_token } = response.data;
+
+            // Update storage
+            const newAuthData = {
+                ...authData,
+                token: access_token,
+                refreshToken: refresh_token || authData.refreshToken // Keep old if not rotated
+            };
+            sessionStorage.setItem(AUTH_KEY, JSON.stringify(newAuthData));
+
+            // Update global header
+            api.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
+
+            console.log('✅ Token refreshed successfully!');
+            return access_token;
+
+        } catch (error) {
+            console.error('❌ Token refresh failed:', error);
+            authService.logout(); // Force logout if refresh fails
+            throw error;
+        }
     }
 };
+
+// Inject authService into api to break circular dependency
+injectAuthService(authService);
